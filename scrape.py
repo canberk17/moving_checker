@@ -1,129 +1,113 @@
+import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import NoSuchElementException
-from selenium.webdriver.common.keys import Keys
-
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
 import cohere
-from selenium.webdriver.chrome.options import Options
-
-# chrome_options = Options()
-# chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36")
-
-
 
 # Load environment variables
 load_dotenv()
 openai_api_key = os.getenv('OPENAI_API_KEY')
-client = OpenAI(api_key=openai_api_key)
-# Now you can access the COHERE_API_KEY environment variable
-cohere_api_key = os.getenv('COHERE_API_KEY')  # Ensure this is 'COHERE_API_KEY'
+cohere_api_key = os.getenv('COHERE_API_KEY')
 
-# Initialize the Cohere client with the API key
-co = cohere.Client(api_key=cohere_api_key)
+# Initialize OpenAI and Cohere clients
+openai_client = OpenAI(api_key=openai_api_key)
+cohere_client = cohere.Client(api_key=cohere_api_key)
 
+def scrape_website(url):
+    # Initialize Chrome options for Selenium
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument("--headless")  # Ensures Chrome runs in headless mode
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
 
+    # Initialize the Chrome driver
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
+    # Set default values for variables
+    cameleon_text = "Not found"
+    footer_text = "Not found"
+    page_title = "Not found"
 
-# Initialize the Chrome driver
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))#, options=chrome_options)
+    # Open the website
+    driver.get(url)
+    driver.implicitly_wait(10)
 
-# Default values for variables
-cameleon_text = "Not found"
-footer_text = "Not found"
-page_title = "Not found"
-
-url = 'https://www.atlanntisvanlines.com/'
-
-# Open the website
-driver.get(f'{url}')
-# Wait for the page to load
-driver.implicitly_wait(10)
-
-try:
-    # Extract the title of the webpage
-    page_title = driver.title
-    print("Page Title:", page_title)
-    
-    # Attempt to find the custom footer element within divs or the #cameleon > p
     try:
-        cameleon_p = driver.find_element(By.CSS_SELECTOR, '#cameleon > p')
-        cameleon_text = cameleon_p.text.strip()
-    except NoSuchElementException:
-        print("Cameleon Content: Not found")
+        page_title = driver.title
+        
+        try:
+            cameleon_p = driver.find_element(By.CSS_SELECTOR, '#cameleon > p')
+            cameleon_text = cameleon_p.text.strip()
+        except NoSuchElementException:
+            cameleon_text = "Not found"
 
-    # Try to find the footer element, handling cases where a traditional footer tag might not exist
-    try:
-        footer = driver.find_element(By.TAG_NAME, 'footer')
-        footer_text = footer.text.strip()
-    except NoSuchElementException:
-        print("Footer Content: Not found")
+        try:
+            footer = driver.find_element(By.TAG_NAME, 'footer')
+            footer_text = footer.text.strip()
+        except NoSuchElementException:
+            footer_text = "Not found"
     
-except Exception as e:
-    print("An error occurred:", e)
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
 
-# Always a good practice to close the browser after scraping
-driver.quit()
+    finally:
+        driver.quit()
 
-# Concatenate the strings, handling potential "Not found" values gracefully
-content_to_analyze = f"{cameleon_text} \n{footer_text} \n{page_title}"
+    return page_title, cameleon_text, footer_text
 
-response = client.chat.completions.create(
-    model="gpt-4",
-    messages=[
-        {"role": "system", "content": "Your job is to extract only the asked information from the given text, nothing more. Make sure to provide your answers as concise as possible."},
-        {"role": "user", "content": f"What is the company name here, please only return the company name from the given text exactly as it is spelled: \n{content_to_analyze}"}
-    ],
-    top_p=0.5,
-    temperature=0.2,
-    max_tokens=150,
-)
+def query_openai(comp_name, cameleon_text, footer_text, page_title):
+    content_to_analyze = f"{cameleon_text} \n{footer_text} \n{page_title}"
+    response = openai_client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "Your job is to extract only the asked information from the given text, nothing more. Make sure to provide your answers as concise as possible."},
+            {"role": "user", "content": f"What is the company name here, please only return the company name from the given text exactly as it is spelled: \n{content_to_analyze}"}
+        ],
+        top_p=0.5,
+        temperature=0.2,
+        max_tokens=150,
+    )
 
-comp_name = response.choices[0].message.content.strip()
+    comp_name = response.choices[0].message.content.strip()
+    return comp_name
 
-print("Company Name:", comp_name)
+def query_cohere(comp_name, url):
+    response = cohere_client.chat(
+        message=f"What is the address of the following moving company use the following link only {url}  here is the company name {comp_name}. If you cannot find the address in the provided website, look up {comp_name} in https://bbb.org/ .",
+        connectors=[{"id": "web-search"}],
+        temperature=0.1
+    )
+    return response.text
 
+# Streamlit app
+def main():
+    st.title("Website Information Extractor")
+    
+    # Input from user
+    user_url = st.text_input("Enter the URL of the website:")
 
-# Use the client to make a request
-cohere_response = co.chat(
-    message=f"What is the address of the following moving company use the following link only {url}  here is the company name {comp_name}. If you cannot find the address in the provided website, look up {comp_name} in  https://bbb.org/ .",
-    connectors=[{"id": "web-search"}],
-    temperature=0.1
-)
+    if st.button("Extract Information"):
+        if user_url:
+            page_title, cameleon_text, footer_text = scrape_website(user_url)
+            comp_name = query_openai(page_title, cameleon_text, footer_text, user_url)
+            cohere_response = query_cohere(comp_name, user_url)
+            
+            # Display extracted information
+            # st.write("### Extracted Information")
+            # st.write(f"**Page Title:** {page_title}")
+            # st.write(f"**Cameleon Text:** {cameleon_text}")
+            # st.write(f"**Footer Text:** {footer_text}")
+            st.write(f"**Company Name:** {comp_name}")
+            
+            # st.write("### Cohere Response")
+            st.write(cohere_response)
+        else:
+            st.error("Please enter a URL to extract information.")
 
-print(cohere_response.text)
-
-
-
-driver.get('https://www.bbb.org/')
-
-# Wait for the page to fully load
-driver.implicitly_wait(10)
-
-try:
-    # Since the CSS selector contains special characters, use double backslashes to escape them in Python string
-    search_bar_css_selector = '#\\:Rlalal5a\\:'  # Update this if the selector changes
-    search_button_css_selector = '#root > div > header > div.css-fj90qq.ed7lj9y0 > div:nth-child(2) > dialog > div > form > div > div.repel > button.bds-button'  # Update this if the selector changes
-
-    # Find the search bar and input the company name
-    search_bar = driver.find_element(By.CSS_SELECTOR, search_bar_css_selector)
-    search_bar.clear()
-    search_bar.send_keys(comp_name)
-
-    # Find the search button and click it
-    search_button = driver.find_element(By.CSS_SELECTOR, search_button_css_selector)
-    search_button.click()
-
-except NoSuchElementException as e:
-    print(f"Element not found: {e}")
-except ElementClickInterceptedException as e:
-    print(f"Element not clickable: {e}")
-except Exception as e:
-    print(f"An error occurred: {e}")
-
-# Close the browser
-driver.quit()
+if __name__ == "__main__":
+    main()
