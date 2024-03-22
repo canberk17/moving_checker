@@ -3,25 +3,44 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.keys import Keys
+
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+import cohere
+from selenium.webdriver.chrome.options import Options
+
+# chrome_options = Options()
+# chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36")
+
+
 
 # Load environment variables
 load_dotenv()
 openai_api_key = os.getenv('OPENAI_API_KEY')
 client = OpenAI(api_key=openai_api_key)
+# Now you can access the COHERE_API_KEY environment variable
+cohere_api_key = os.getenv('COHERE_API_KEY')  # Ensure this is 'COHERE_API_KEY'
+
+# Initialize the Cohere client with the API key
+co = cohere.Client(api_key=cohere_api_key)
+
+
+
 
 # Initialize the Chrome driver
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))#, options=chrome_options)
 
 # Default values for variables
 cameleon_text = "Not found"
 footer_text = "Not found"
 page_title = "Not found"
 
+url = 'https://www.atlanntisvanlines.com/'
+
 # Open the website
-driver.get('https://www.tcvl.ca/')
+driver.get(f'{url}')
 # Wait for the page to load
 driver.implicitly_wait(10)
 
@@ -67,3 +86,44 @@ response = client.chat.completions.create(
 comp_name = response.choices[0].message.content.strip()
 
 print("Company Name:", comp_name)
+
+
+# Use the client to make a request
+cohere_response = co.chat(
+    message=f"What is the address of the following moving company use the following link only {url}  here is the company name {comp_name}. If you cannot find the address in the provided website, look up {comp_name} in  https://bbb.org/ .",
+    connectors=[{"id": "web-search"}],
+    temperature=0.1
+)
+
+print(cohere_response.text)
+
+
+
+driver.get('https://www.bbb.org/')
+
+# Wait for the page to fully load
+driver.implicitly_wait(10)
+
+try:
+    # Since the CSS selector contains special characters, use double backslashes to escape them in Python string
+    search_bar_css_selector = '#\\:Rlalal5a\\:'  # Update this if the selector changes
+    search_button_css_selector = '#root > div > header > div.css-fj90qq.ed7lj9y0 > div:nth-child(2) > dialog > div > form > div > div.repel > button.bds-button'  # Update this if the selector changes
+
+    # Find the search bar and input the company name
+    search_bar = driver.find_element(By.CSS_SELECTOR, search_bar_css_selector)
+    search_bar.clear()
+    search_bar.send_keys(comp_name)
+
+    # Find the search button and click it
+    search_button = driver.find_element(By.CSS_SELECTOR, search_button_css_selector)
+    search_button.click()
+
+except NoSuchElementException as e:
+    print(f"Element not found: {e}")
+except ElementClickInterceptedException as e:
+    print(f"Element not clickable: {e}")
+except Exception as e:
+    print(f"An error occurred: {e}")
+
+# Close the browser
+driver.quit()
