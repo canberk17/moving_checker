@@ -78,7 +78,7 @@ def query_openai(comp_name, cameleon_text, footer_text, page_title):
 
 def query_cohere(comp_name, url):
     response = cohere_client.chat(
-        message=f"What is the address of the following moving company use the following link only {url}  here is the company name {comp_name}. If you cannot find the address in the provided website, look up {comp_name} in https://bbb.org/ .",
+        message=f"What is the address of the following moving company use the following link only {url}  here is the company name {comp_name}. If you cannot find the address in the provided website, look up {comp_name} in https://bbb.org/ . Also check the google reviews for {comp_name} and provide the information accordingly",
         connectors=[{"id": "web-search"}],
         temperature=0.1
     )
